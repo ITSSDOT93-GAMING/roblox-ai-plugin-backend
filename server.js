@@ -8,7 +8,7 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/", (req, res) => {
-  res.send("Roblox AI Plugin backend is running with OpenRouter.");
+  res.send("Roblox plugin backend is running with OpenRouter.");
 });
 
 function jsonError(res, status, message, extra = {}) {
@@ -50,17 +50,17 @@ async function callOpenRouter(systemPrompt, userPrompt, model = "openrouter/free
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
       "HTTP-Referer": "https://render.com",
-      "X-Title": "Roblox AI Plugin Backend"
+      "X-Title": "Roblox Plugin Backend",
     },
     body: JSON.stringify({
       model,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
+        { role: "user", content: userPrompt },
       ],
-      temperature: 0.2
+      temperature: 0.2,
     }),
   });
 
@@ -69,8 +69,8 @@ async function callOpenRouter(systemPrompt, userPrompt, model = "openrouter/free
   if (!response.ok) {
     throw new Error(
       data?.error?.message ||
-      data?.message ||
-      `OpenRouter request failed with status ${response.status}`
+        data?.message ||
+        `OpenRouter request failed with status ${response.status}`
     );
   }
 
@@ -105,7 +105,7 @@ Rules:
 - Mode: ${mode}
 - Prefer clean, production-ready Roblox patterns.
 - Use Roblox services correctly.
-- Return code only.
+- Return code or explanation text only.
 - Do not use markdown fences.
 `.trim();
 
@@ -187,12 +187,20 @@ app.post("/ai/multifile", async (req, res) => {
     const systemPrompt = `
 You are an expert Roblox architecture generator.
 
-Return a JSON object with this exact shape:
+Return valid JSON only with this exact shape:
 {
+  "systemName": "SwordCombat",
+  "folders": [
+    "ReplicatedStorage/SwordCombat/Shared",
+    "ReplicatedStorage/SwordCombat/Remotes",
+    "ServerScriptService/SwordCombat",
+    "StarterPlayerScripts/SwordCombat"
+  ],
   "files": [
     {
-      "name": "FileName.lua",
-      "path": "ServerScriptService/FileName.lua",
+      "name": "CombatConfig",
+      "path": "ReplicatedStorage/SwordCombat/Shared/CombatConfig",
+      "kind": "ModuleScript",
       "code": "-- Luau code here"
     }
   ],
@@ -201,9 +209,16 @@ Return a JSON object with this exact shape:
 
 Rules:
 - Output valid JSON only.
-- Generate realistic Roblox multi-file structure.
-- Use Luau code in each file.
-- Prefer ServerScriptService, StarterPlayer, ReplicatedStorage, and ModuleScripts when appropriate.
+- Do not prefix names with AI.
+- Use clean, human-style folder names.
+- Use these kinds only: Script, LocalScript, ModuleScript.
+- Put server files in ServerScriptService.
+- Put client files in StarterPlayerScripts.
+- Put shared modules/remotes in ReplicatedStorage.
+- Include folders needed for the generated structure.
+- File names should be clean and production-like.
+- Do not include .lua in the name field.
+- The final segment of path should match the file name.
 `.trim();
 
     const userPrompt = `
@@ -226,9 +241,21 @@ ${context}
       return jsonError(res, 500, "Model returned invalid JSON", { raw });
     }
 
+    if (!Array.isArray(parsed.folders)) parsed.folders = [];
+    if (!Array.isArray(parsed.files)) parsed.files = [];
+    if (typeof parsed.systemName !== "string" || !parsed.systemName.trim()) {
+      parsed.systemName = "GameSystem";
+    }
+    if (typeof parsed.notes !== "string") {
+      parsed.notes = "";
+    }
+
     res.json({
       ok: true,
-      ...parsed,
+      systemName: parsed.systemName,
+      folders: parsed.folders,
+      files: parsed.files,
+      notes: parsed.notes,
     });
   } catch (err) {
     console.error("/ai/multifile failed:", err);
