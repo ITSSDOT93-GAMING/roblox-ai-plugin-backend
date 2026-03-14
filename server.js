@@ -19,6 +19,31 @@ function jsonError(res, status, message, extra = {}) {
   });
 }
 
+function extractTextFromResponse(data) {
+  if (typeof data?.output_text === "string" && data.output_text.trim() !== "") {
+    return data.output_text;
+  }
+
+  if (Array.isArray(data?.output)) {
+    const parts = [];
+
+    for (const item of data.output) {
+      if (!Array.isArray(item?.content)) continue;
+
+      for (const content of item.content) {
+        if (content?.type === "output_text" && typeof content?.text === "string") {
+          parts.push(content.text);
+        }
+      }
+    }
+
+    const joined = parts.join("\n").trim();
+    if (joined) return joined;
+  }
+
+  return "";
+}
+
 async function callOpenAI(instructions, input) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -27,7 +52,7 @@ async function callOpenAI(instructions, input) {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: "gpt-5",
+      model: "gpt-5.4",
       instructions,
       input,
     }),
@@ -41,7 +66,15 @@ async function callOpenAI(instructions, input) {
     );
   }
 
-  return data.output_text || "";
+  const text = extractTextFromResponse(data);
+
+  if (!text) {
+    throw new Error(
+      `Model returned no text. Raw response: ${JSON.stringify(data).slice(0, 3000)}`
+    );
+  }
+
+  return text;
 }
 
 app.post("/ai/run", async (req, res) => {
@@ -59,13 +92,13 @@ app.post("/ai/run", async (req, res) => {
 You are an expert Roblox Luau coding assistant.
 
 Rules:
-- Write only valid Roblox Luau.
+- Write only valid Roblox Luau code.
 - Target script type: ${scriptType}
 - Mode: ${mode}
 - Prefer clean, production-ready Roblox patterns.
 - Use Roblox services correctly.
-- Avoid markdown fences unless explicitly requested.
-- If useful, include short comments in code.
+- Return code only.
+- Do not use markdown fences.
 `.trim();
 
     const input = `
@@ -84,6 +117,7 @@ ${context}
       code,
     });
   } catch (err) {
+    console.error("/ai/run failed:", err);
     jsonError(res, 500, "Generation failed", { details: String(err) });
   }
 });
@@ -104,10 +138,9 @@ You are an expert Roblox Luau debugger.
 Rules:
 - Fix the code for Roblox Studio.
 - Return the corrected Luau code first.
-- After the code, add a short plain-English section starting with:
-EXPLANATION:
+- After the code, add a short section starting with EXPLANATION:
 - Do not use markdown fences.
-- Preserve the original behavior unless the bug requires changing it.
+- Preserve behavior unless the bug requires changing it.
 `.trim();
 
     const input = `
@@ -128,6 +161,7 @@ ${context}
       fixed,
     });
   } catch (err) {
+    console.error("/ai/fix failed:", err);
     jsonError(res, 500, "Fix failed", { details: String(err) });
   }
 });
@@ -189,6 +223,7 @@ ${context}
       ...parsed,
     });
   } catch (err) {
+    console.error("/ai/multifile failed:", err);
     jsonError(res, 500, "Multi-file generation failed", { details: String(err) });
   }
 });
