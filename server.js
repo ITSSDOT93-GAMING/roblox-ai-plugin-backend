@@ -8,7 +8,7 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/", (req, res) => {
-  res.send("Roblox AI Plugin backend is running.");
+  res.send("Roblox AI Plugin backend is running with OpenRouter.");
 });
 
 function jsonError(res, status, message, extra = {}) {
@@ -24,19 +24,20 @@ function extractTextFromResponse(data) {
     return data.output_text;
   }
 
-  if (Array.isArray(data?.output)) {
+  if (Array.isArray(data?.choices) && data.choices[0]?.message?.content) {
+    const content = data.choices[0].message.content;
+    if (typeof content === "string" && content.trim() !== "") {
+      return content;
+    }
+  }
+
+  if (Array.isArray(data?.choices) && Array.isArray(data.choices[0]?.message?.content)) {
     const parts = [];
-
-    for (const item of data.output) {
-      if (!Array.isArray(item?.content)) continue;
-
-      for (const content of item.content) {
-        if (content?.type === "output_text" && typeof content?.text === "string") {
-          parts.push(content.text);
-        }
+    for (const item of data.choices[0].message.content) {
+      if (item?.type === "text" && typeof item?.text === "string") {
+        parts.push(item.text);
       }
     }
-
     const joined = parts.join("\n").trim();
     if (joined) return joined;
   }
@@ -44,17 +45,22 @@ function extractTextFromResponse(data) {
   return "";
 }
 
-async function callOpenAI(instructions, input) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
+async function callOpenRouter(systemPrompt, userPrompt, model = "openrouter/free") {
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      "HTTP-Referer": "https://render.com",
+      "X-Title": "Roblox AI Plugin Backend"
     },
     body: JSON.stringify({
-      model: "gpt-5.4",
-      instructions,
-      input,
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.2
     }),
   });
 
@@ -62,7 +68,9 @@ async function callOpenAI(instructions, input) {
 
   if (!response.ok) {
     throw new Error(
-      data?.error?.message || `OpenAI request failed with status ${response.status}`
+      data?.error?.message ||
+      data?.message ||
+      `OpenRouter request failed with status ${response.status}`
     );
   }
 
@@ -88,7 +96,7 @@ app.post("/ai/run", async (req, res) => {
       return jsonError(res, 400, "Missing prompt");
     }
 
-    const instructions = `
+    const systemPrompt = `
 You are an expert Roblox Luau coding assistant.
 
 Rules:
@@ -101,7 +109,7 @@ Rules:
 - Do not use markdown fences.
 `.trim();
 
-    const input = `
+    const userPrompt = `
 User request:
 ${prompt}
 
@@ -109,7 +117,7 @@ Extra context:
 ${context}
 `.trim();
 
-    const code = await callOpenAI(instructions, input);
+    const code = await callOpenRouter(systemPrompt, userPrompt);
 
     res.json({
       ok: true,
@@ -132,7 +140,7 @@ app.post("/ai/fix", async (req, res) => {
       return jsonError(res, 400, "Missing code");
     }
 
-    const instructions = `
+    const systemPrompt = `
 You are an expert Roblox Luau debugger.
 
 Rules:
@@ -143,7 +151,7 @@ Rules:
 - Preserve behavior unless the bug requires changing it.
 `.trim();
 
-    const input = `
+    const userPrompt = `
 Broken code:
 ${code}
 
@@ -154,7 +162,7 @@ Extra context:
 ${context}
 `.trim();
 
-    const fixed = await callOpenAI(instructions, input);
+    const fixed = await callOpenRouter(systemPrompt, userPrompt);
 
     res.json({
       ok: true,
@@ -176,7 +184,7 @@ app.post("/ai/multifile", async (req, res) => {
       return jsonError(res, 400, "Missing prompt");
     }
 
-    const instructions = `
+    const systemPrompt = `
 You are an expert Roblox architecture generator.
 
 Return a JSON object with this exact shape:
@@ -198,7 +206,7 @@ Rules:
 - Prefer ServerScriptService, StarterPlayer, ReplicatedStorage, and ModuleScripts when appropriate.
 `.trim();
 
-    const input = `
+    const userPrompt = `
 Project type:
 ${projectType}
 
@@ -209,7 +217,7 @@ Extra context:
 ${context}
 `.trim();
 
-    const raw = await callOpenAI(instructions, input);
+    const raw = await callOpenRouter(systemPrompt, userPrompt);
 
     let parsed;
     try {
