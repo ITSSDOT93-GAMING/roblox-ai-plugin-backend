@@ -45,6 +45,20 @@ function extractTextFromResponse(data) {
   return "";
 }
 
+function stripCodeFences(text) {
+  if (!text || typeof text !== "string") return "";
+
+  let cleaned = text.trim();
+
+  cleaned = cleaned.replace(/^```lua\s*/i, "");
+  cleaned = cleaned.replace(/^```luau\s*/i, "");
+  cleaned = cleaned.replace(/^```json\s*/i, "");
+  cleaned = cleaned.replace(/^```\s*/i, "");
+  cleaned = cleaned.replace(/\s*```$/i, "");
+
+  return cleaned.trim();
+}
+
 async function callOpenRouter(systemPrompt, userPrompt, model = "openrouter/free") {
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -69,8 +83,8 @@ async function callOpenRouter(systemPrompt, userPrompt, model = "openrouter/free
   if (!response.ok) {
     throw new Error(
       data?.error?.message ||
-        data?.message ||
-        `OpenRouter request failed with status ${response.status}`
+      data?.message ||
+      `OpenRouter request failed with status ${response.status}`
     );
   }
 
@@ -106,7 +120,9 @@ Rules:
 - Prefer clean, production-ready Roblox patterns.
 - Use Roblox services correctly.
 - Return code or explanation text only.
-- Do not use markdown fences.
+- Never use markdown code fences.
+- Never start with \`\`\`lua or \`\`\`luau.
+- Never end with \`\`\`.
 `.trim();
 
     const userPrompt = `
@@ -117,7 +133,8 @@ Extra context:
 ${context}
 `.trim();
 
-    const code = await callOpenRouter(systemPrompt, userPrompt);
+    const raw = await callOpenRouter(systemPrompt, userPrompt);
+    const code = stripCodeFences(raw);
 
     res.json({
       ok: true,
@@ -148,6 +165,8 @@ Rules:
 - Return the corrected Luau code first.
 - After the code, add a short section starting with EXPLANATION:
 - Do not use markdown fences.
+- Never start with \`\`\`lua or \`\`\`luau.
+- Never end with \`\`\`.
 - Preserve behavior unless the bug requires changing it.
 `.trim();
 
@@ -162,7 +181,8 @@ Extra context:
 ${context}
 `.trim();
 
-    const fixed = await callOpenRouter(systemPrompt, userPrompt);
+    const raw = await callOpenRouter(systemPrompt, userPrompt);
+    const fixed = stripCodeFences(raw);
 
     res.json({
       ok: true,
@@ -219,6 +239,9 @@ Rules:
 - File names should be clean and production-like.
 - Do not include .lua in the name field.
 - The final segment of path should match the file name.
+- Each file.code field must contain raw Luau only.
+- Never wrap file.code in markdown fences.
+- Never use \`\`\`lua, \`\`\`luau, or \`\`\`.
 `.trim();
 
     const userPrompt = `
@@ -236,7 +259,7 @@ ${context}
 
     let parsed;
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(stripCodeFences(raw));
     } catch {
       return jsonError(res, 500, "Model returned invalid JSON", { raw });
     }
@@ -249,6 +272,13 @@ ${context}
     if (typeof parsed.notes !== "string") {
       parsed.notes = "";
     }
+
+    parsed.files = parsed.files.map((file) => ({
+      name: typeof file?.name === "string" ? file.name : "NewFile",
+      path: typeof file?.path === "string" ? file.path : "ReplicatedStorage/NewFile",
+      kind: typeof file?.kind === "string" ? file.kind : "ModuleScript",
+      code: stripCodeFences(typeof file?.code === "string" ? file.code : "-- no code"),
+    }));
 
     res.json({
       ok: true,
