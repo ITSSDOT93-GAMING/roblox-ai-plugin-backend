@@ -5,6 +5,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.get("/", (req, res) => {
+  res.send("Roblox AI Plugin backend is running.");
+});
+
 app.post("/generate", async (req, res) => {
   try {
     const prompt = req.body.prompt || "";
